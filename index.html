@@ -231,6 +231,10 @@
     .agent-msg-row.user { justify-content: flex-end; }
     .agent-bubble { max-width: 78%; padding: 12px 16px; font-size: 14px; line-height: 1.55; border-radius: 4px 18px 18px 18px; }
     .agent-bubble.assistant { background: #fff; color: #0D1B3D; border: 1px solid #E8EEFF; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+    .motor-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; border-radius: 20px; padding: 2px 8px; margin-top: 5px; }
+    .motor-badge.gemini { color: #1A73E8; background: #E8F0FE; }
+    .motor-badge.claude { color: #7B5CF6; background: rgba(123,92,246,.1); }
+    .motor-badge.fallback { color: #888; background: #F1F3F6; }
     .agent-bubble.user { background: linear-gradient(135deg, #7B5CF6, #2D8CFF); color: #fff; border-radius: 18px 18px 4px 18px; }
     .rec-intro { font-size: 13px; color: #666; margin-bottom: 12px; }
     .rec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -443,7 +447,7 @@ async function llamarBackend(system, messages) {
   if (!res.ok) throw new Error(`Backend HTTP ${res.status}`);
   const data = await res.json();
   if (!data.text) throw new Error("Backend sin texto");
-  return data.text;
+  return { text: data.text, motor: data.motor || "gemini" };
 }
 
 // ── DATOS ───────────────────────────────────────────────────────────────────
@@ -1151,10 +1155,11 @@ function renderAgenteThread() {
             <p class="rec-precio">Desde $${min.toLocaleString("es-CO")}</p>
           </button>`;
       });
-      html += `</div></div>`;
+      html += `</div>${m.motor ? motorBadge(m.motor) : ""}</div>`;
     } else {
       const cls = m.role === "user" ? "user" : "assistant";
-      html += `<div class="agent-msg-row ${cls}"><div class="agent-bubble ${cls}">${escHtml(m.text)}</div></div>`;
+      const badge = (cls === "assistant" && m.motor) ? motorBadge(m.motor) : "";
+      html += `<div class="agent-msg-row ${cls}"><div><div class="agent-bubble ${cls}">${escHtml(m.text)}</div>${badge}</div></div>`;
     }
   });
   if (state.agenteLoading) {
@@ -1191,12 +1196,12 @@ async function enviarAgente(textoForzado) {
     .filter(m => m.content);
 
   try {
-    const raw = await llamarBackend(agenteSystemPrompt(), messages);
-    const parsed = intentarExtraerJSON(raw);
+    const resp = await llamarBackend(agenteSystemPrompt(), messages);
+    const parsed = intentarExtraerJSON(resp.text);
     if (parsed && parsed.tipo === "recomendaciones" && Array.isArray(parsed.opciones) && parsed.opciones.length) {
-      state.agenteMsgs.push({ role: "recomendaciones", data: parsed });
-    } else if (raw.trim()) {
-      state.agenteMsgs.push({ role: "assistant", text: raw.trim() });
+      state.agenteMsgs.push({ role: "recomendaciones", data: parsed, motor: resp.motor });
+    } else if (resp.text.trim()) {
+      state.agenteMsgs.push({ role: "assistant", text: resp.text.trim(), motor: resp.motor });
     } else {
       throw new Error("respuesta_vacia");
     }
@@ -1326,7 +1331,8 @@ function renderChatMsgs() {
       html += renderOrdenCard(m.data, i);
     } else {
       const cls = m.role === "user" ? "user" : "assistant";
-      html += `<div class="msg-row ${cls}"><div class="msg-bubble ${cls}">${escHtml(m.text)}</div></div>`;
+      const badge = (cls === "assistant" && m.motor) ? `<div style="margin-top:3px;margin-left:2px;">${motorBadge(m.motor)}</div>` : "";
+      html += `<div class="msg-row ${cls}"><div><div class="msg-bubble ${cls}">${escHtml(m.text)}</div>${badge}</div></div>`;
     }
   });
   if (state.chatLoading) {
@@ -1427,13 +1433,13 @@ RESERVAS: Si quiere cita/turno, pide nombre, teléfono y cuándo. Luego responde
 {"tipo":"reserva","servicio":"...","nombre":"...","telefono":"...","fecha":"..."}`;
 
   try {
-    const raw = await llamarBackend(systemComercio, messages);
-    const jsonMatch = raw.match(/\{[^{}]*"tipo"\s*:\s*"(pedido|reserva)"[^{}]*\}/s);
+    const resp = await llamarBackend(systemComercio, messages);
+    const jsonMatch = resp.text.match(/\{[^{}]*"tipo"\s*:\s*"(pedido|reserva)"[^{}]*\}/s);
     if (jsonMatch) {
       try { state.chatMsgs.push({ role:"orden", data: JSON.parse(jsonMatch[0]) }); }
-      catch { state.chatMsgs.push({ role:"assistant", text:raw }); }
+      catch { state.chatMsgs.push({ role:"assistant", text: resp.text, motor: resp.motor }); }
     } else {
-      state.chatMsgs.push({ role:"assistant", text:raw });
+      state.chatMsgs.push({ role:"assistant", text: resp.text, motor: resp.motor });
     }
   } catch(e) {
     state.chatMsgs.push({ role:"assistant", text:"En este momento no puedo responder. Escríbenos al WhatsApp: " + c.whatsapp });
@@ -1515,6 +1521,13 @@ function onbNext() {
 }
 
 // ── UTILS ────────────────────────────────────────────────────────────────────
+function motorBadge(motor) {
+  if (!motor) return "";
+  if (motor === "gemini") return `<div><span class="motor-badge gemini">⚡ Gemini</span></div>`;
+  if (motor === "claude") return `<div><span class="motor-badge claude">✦ Claude</span></div>`;
+  return `<div><span class="motor-badge fallback">💡 IA local</span></div>`;
+}
+
 function escHtml(s) {
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
